@@ -53,4 +53,16 @@ These are called out in `CLAUDE.md` / the tech proposal as correctness-critical 
 
 ## Running tests
 
-No test runner is wired up yet (see repo state in `CLAUDE.md`). Once `apps/`/`packages/` scaffolding exists, check `package.json` scripts (expect something like `pnpm test`, `pnpm test path/to/file.spec.ts -t "test name"` for Vitest) rather than assuming a command — update this section once the scaffolding lands.
+Vitest everywhere (`apps/api` runs it through SWC so Nest decorator metadata works). Run the smallest thing that proves the step:
+
+```bash
+pnpm --filter @noizera/domain test                                   # one package
+pnpm --filter @noizera/api test src/health/health.controller.spec.ts  # one file
+pnpm --filter @noizera/api test -- -t "reports ok"                    # one test by name
+pnpm test                                                             # everything, via turbo
+pnpm lint:deps                                                        # module-boundary rules (dependency-cruiser) — run after adding any import across packages/modules
+```
+
+Workspace packages are consumed from their built `dist/`; if a test can't resolve `@noizera/*`, run `pnpm build --filter='./packages/*'` first (turbo does this for `pnpm test`, not for a single-package run).
+
+Integration tests against Postgres/RabbitMQ/Valkey use Testcontainers — Docker must be running; there are no service mocks to fall back to, by design.

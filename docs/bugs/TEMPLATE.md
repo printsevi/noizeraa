@@ -1,7 +1,7 @@
 ---
 status: open
 severity: <critical | high | medium | low>
-module: <identity | catalog | media | sharing | panels | listeners | responses | results | billing | editorial | admin>
+module: <identity | catalog | media | sharing | panels | listeners | responses | results | billing | editorial | admin | infra>
 ---
 
 # <Short, specific title>

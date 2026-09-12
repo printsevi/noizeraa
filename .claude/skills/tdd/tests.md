@@ -28,9 +28,9 @@ Characteristics:
 ```typescript
 // BAD: tests implementation details
 test("closePanel calls resultsAggregator.run", async () => {
-  const mockAggregator = jest.mock(resultsAggregator);
+  const run = vi.spyOn(resultsAggregator, "run");
   await closePanel(panel.id);
-  expect(mockAggregator.run).toHaveBeenCalledWith(panel.id);
+  expect(run).toHaveBeenCalledWith(panel.id);
 });
 ```
 

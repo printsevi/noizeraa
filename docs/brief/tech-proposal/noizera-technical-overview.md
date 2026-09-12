@@ -1,8 +1,16 @@
 # Noizera — Technical Implementation, Architecture & Infrastructure
 
-**v1.0 · September 2026 · companion to the v3.0 pitch**
+**v1.1 · September 2026 · companion to the v3.0 pitch**
 
 Scope: the nine-week build in §7 of the pitch (features 1–14), the infrastructure it runs on, and the decisions still open.
+
+**Errata / changes since v1.0** (2026-09-12, from the repo audit — factual corrections applied in place; decisions that go beyond this document live in `docs/adrs/`):
+
+- §2: "one image, four container roles" → the api image serves three roles (`api`, `worker-media`, `worker-general`); `web` is its own image.
+- §11.3 layout: `compose/docker-compose.db.yml postgres` removed — Postgres and pgBackRest run on vm-db's host per §11, not in Compose.
+- §11 / §12: CI reaches vm-app over Tailscale, with public SSH kept to the admin IP as break-glass — ADR 001. Tailscale added to the §14 subprocessor list.
+- §11: Hetzner Cloud Firewalls filter the public interface only; the "5432 only from vm-app's private IP" rule is enforced by ufw + `pg_hba` on vm-db, not by the cloud firewall. vm-db reaches the internet through NAT on vm-app.
+- §13: Umami deferred (it was already on the §16 cut list); tracked as `docs/tickets/007-umami.md`.
 
 ---
 
@@ -113,7 +121,7 @@ Two commands per file, and Gate 1 measures preference instead of gain. This is a
                  └───────────────────────────────────────┘
 ```
 
-All workers are the same NestJS codebase started with a different `APP_ROLE`, sharing the domain layer. One image, four container roles: `api`, `worker-media`, `worker-general`, `web`.
+All workers are the same NestJS codebase started with a different `APP_ROLE`, sharing the domain layer. One api image, three container roles: `api`, `worker-media`, `worker-general`; `web` (Next.js) is a separate image.
 
 ---
 
@@ -457,7 +465,7 @@ Three surfaces with genuinely different requirements:
                     └─────────────────┘
 ```
 
-**Network.** Private network between the VMs, Postgres bound to the private interface only, no public IPv4 on `vm-db`. Cloud firewall allows 443/80 to `vm-app` and 5432 only from `vm-app`'s private IP. SSH by key, restricted to your IP plus a fallback; Tailscale (MIT) is worth the ten minutes if you administer from more than one place.
+**Network.** Private network between the VMs, Postgres bound to the private interface only, no public IPv4 on `vm-db` (its outbound traffic is NATed through `vm-app`). Cloud firewall allows 443/80 to `vm-app`; note Hetzner Cloud Firewalls filter the public interface only, so "5432 only from `vm-app`'s private IP" is enforced on `vm-db` itself with ufw and `pg_hba`. SSH by key: routine admin and CI deploys go over Tailscale (ADR 001); public 22 stays restricted to your IP as break-glass.
 
 **Postgres config** for 4GB: `shared_buffers=1GB`, `effective_cache_size=3GB`, `work_mem=16MB`, `max_connections=100` with PgBouncer in transaction mode on the app side (Node connection pools plus workers will otherwise exhaust it). Enable `pg_stat_statements` on day one.
 
@@ -545,11 +553,11 @@ infra/
     dns.tf             A/AAAA, MX, SPF, DKIM, DMARC, _acme
     outputs.tf         IPs consumed by the deploy workflow
   cloud-init/
-    app.yaml           users, sshd hardening, docker, fail2ban, node_exporter
-    db.yaml            same + postgres, pgbackrest, volume mount
+    app.yaml           users, sshd hardening, docker, fail2ban, tailscale, NAT for vm-db
+    db.yaml            users, sshd hardening, ufw, postgres + pgbackrest packages
   compose/
-    docker-compose.yml         app services
-    docker-compose.db.yml      postgres
+    docker-compose.yml         app services (postgres runs on vm-db's host, not here)
+    Caddyfile
 ```
 
 **OpenTofu owns things that change monthly**: servers, volumes, private network, firewall rules, buckets and lifecycle policies, DNS records, SSH keys, Cloudflare zone settings and WAF rules. **Compose owns things that change daily**: the application containers. Keeping the deploy path out of Tofu is what stops a routine release from ever running `tofu apply`.
@@ -573,7 +581,7 @@ git push main
          ├─ integration (Testcontainers: postgres + rabbitmq)
          ├─ playwright on the listener flow
          ├─ docker buildx → ghcr.io/…/{api,web}:sha
-         └─ ssh vm-app:
+         └─ ssh vm-app (over Tailscale, ADR 001; rsync infra/compose first):
               sops -d .env.enc > .env
               docker compose pull
               docker compose run --rm api node dist/migrate.js   # advisory-locked
@@ -652,7 +660,7 @@ Cost of the hop: one Valkey lookup and one HMAC per segment, roughly 40 requests
 
 **GDPR, built in rather than retrofitted:**
 
-- Hetzner EU regions only; subprocessor list and DPAs for the email provider, Stripe, and Grafana Cloud from day one
+- Hetzner EU regions only; subprocessor list and DPAs for the email provider, Stripe, Grafana Cloud, Cloudflare (§11.2) and Tailscale (ADR 001 — coordination metadata only, never traffic) from day one
 - Consent records with purpose, timestamp and the version of the text consented to
 - `GET /me/export` (JSON + audio manifest) and `DELETE /me` with a 30-day soft window, implemented as a saga: anonymise responses, drop PII, keep aggregate counts so a deletion doesn't silently rewrite a panel result an artist already acted on
 - IP addresses hashed with a rotating salt, never stored raw
