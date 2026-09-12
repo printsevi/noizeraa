@@ -1,13 +1,18 @@
-# Runs on vm-app. All four `api`/worker roles share one image
+# Runs on vm-app. The three `api`/worker roles share one image
 # (apps/api), selected by APP_ROLE — tech proposal §2. `api` is meant to
 # run with 2 replicas behind Caddy's least_conn (tech proposal §11.1):
-#   docker compose up -d --no-deps --wait --scale api=2 api web workers
+#   docker compose up -d --no-deps --wait --scale api=2 api web worker-media worker-general
 #
 # ${IMAGE_TAG} / ${GHCR_OWNER_REPO} are compose-file interpolation, read
 # from a .env in THIS directory (infra/compose/.env) — not the same file
 # as ../../.env below, which is decrypted secrets injected into
 # containers via env_file:. The deploy workflow (.github/workflows/ci-cd.yml)
-# writes both files on every deploy.
+# writes both files on every deploy and rsyncs this directory from the
+# repo at the deployed sha.
+#
+# Umami (product analytics, tech proposal §13) is not here: it needs its
+# own database and Caddy route and is on the §16 cut list — see
+# docs/tickets/007-umami.md.
 
 services:
   caddy:
@@ -40,9 +45,19 @@ services:
       APP_ROLE: api
     expose:
       - "3000"
+    # `docker compose up --wait` blocks on this, and Caddy's health_uri
+    # polls the same endpoint — together they're the zero-downtime part.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
     depends_on:
-      - rabbitmq
-      - valkey
+      rabbitmq:
+        condition: service_healthy
+      valkey:
+        condition: service_started
 
   worker-media:
     image: ghcr.io/${GHCR_OWNER_REPO}-api:${IMAGE_TAG:-latest}
@@ -52,7 +67,8 @@ services:
       APP_ROLE: worker-media
     cpus: 2
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
 
   worker-general:
     image: ghcr.io/${GHCR_OWNER_REPO}-api:${IMAGE_TAG:-latest}
@@ -61,26 +77,25 @@ services:
     environment:
       APP_ROLE: worker-general
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
 
   rabbitmq:
     image: rabbitmq:4-management
     restart: unless-stopped
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   valkey:
     image: valkey/valkey:8
     restart: unless-stopped
     volumes:
       - valkey_data:/data
-
-  umami:
-    image: ghcr.io/umami-software/umami:postgresql-latest
-    restart: unless-stopped
-    env_file: ../../.env
-    expose:
-      - "3000"
 
 volumes:
   caddy_data:

@@ -43,7 +43,9 @@ resource "hcloud_server" "db" {
   })
 
   # No public IPv4/IPv6 (tech proposal §11) — reached only via the
-  # private network, from vm-app.
+  # private network, from vm-app. Outbound goes through vm-app's NAT
+  # (network.tf `nat_via_app`, cloud-init/app.yaml), so the route must
+  # exist before cloud-init here can install anything.
   public_net {
     ipv4_enabled = false
     ipv6_enabled = false
@@ -54,7 +56,7 @@ resource "hcloud_server" "db" {
     ip         = "10.0.0.20"
   }
 
-  depends_on = [hcloud_network_subnet.main]
+  depends_on = [hcloud_network_subnet.main, hcloud_network_route.nat_via_app, hcloud_server.app]
 }
 
 resource "hcloud_volume_attachment" "pgdata" {

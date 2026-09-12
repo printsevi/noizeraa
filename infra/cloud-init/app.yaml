@@ -1,8 +1,10 @@
 #cloud-config
-# vm-app: brings the VM to "Docker running, SSH hardened, user created"
-# and stops — it does not deploy the application (tech proposal §11.3).
-# The GitHub Actions deploy workflow (see docs/brief/tech-proposal/...
-# §12) handles everything after this.
+# vm-app: brings the VM to "Docker running, SSH hardened, user created,
+# Tailscale installed, NAT for vm-db" and stops — it does not deploy the
+# application (tech proposal §11.3). The GitHub Actions deploy workflow
+# handles everything after this. Tailscale is installed but not joined:
+# `tailscale up --advertise-tags=tag:server` is a one-time manual step
+# with an auth key from the admin console (ADR 001).
 
 users:
   - name: deploy
@@ -23,6 +25,7 @@ packages:
   - ca-certificates
   - curl
   - gnupg
+  - rsync
 
 write_files:
   - path: /etc/ssh/sshd_config.d/99-hardening.conf
@@ -31,7 +34,48 @@ write_files:
       PermitRootLogin no
       X11Forwarding no
 
+  # NAT gateway for vm-db (no public IP): the hcloud_network_route in
+  # network.tf sends the subnet's default traffic here; this forwards it
+  # out of the public interface. Persisted via sysctl.d + a systemd unit
+  # so it survives reboots without depending on iptables-persistent.
+  - path: /etc/sysctl.d/99-nat.conf
+    content: |
+      net.ipv4.ip_forward = 1
+
+  - path: /usr/local/sbin/noizera-nat.sh
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      set -eu
+      PUB_IF="$(ip -o -4 route show to default | awk '{print $5}' | head -n1)"
+      iptables -t nat -C POSTROUTING -s 10.0.0.0/24 -o "$PUB_IF" -j MASQUERADE 2>/dev/null \
+        || iptables -t nat -A POSTROUTING -s 10.0.0.0/24 -o "$PUB_IF" -j MASQUERADE
+
+  - path: /etc/systemd/system/noizera-nat.service
+    content: |
+      [Unit]
+      Description=NAT for the private network (vm-db egress via vm-app)
+      After=network-online.target docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/noizera-nat.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /opt/noizera/README
+    content: |
+      Deploy target. infra/compose is rsynced here by the CI deploy job.
+      Provision by hand, once: /opt/noizera/age.key (mode 0600, owner
+      deploy) and /opt/noizera/infra/compose/.env.enc (sops-encrypted
+      runtime secrets). Nothing else lives here.
+
 runcmd:
+  - mkdir -p /opt/noizera/infra/compose
+  - chown -R deploy:deploy /opt/noizera
   # Docker Engine + Compose plugin, per Docker's own apt install method —
   # verify against current docs.docker.com before relying on this if it's
   # been a while since this file was last checked.
@@ -49,8 +93,19 @@ runcmd:
   - systemctl enable --now docker
   - systemctl enable --now fail2ban
   - usermod -aG docker deploy
-  - systemctl restart sshd
+  # Tailscale (ADR 001) — installed, not joined; see header.
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  # NAT for vm-db
+  - sysctl --system
+  - systemctl daemon-reload
+  - systemctl enable --now noizera-nat.service
+  # sops for decrypting .env.enc at deploy time; pin + checksum match
+  # .github/workflows/infra-*.yml
+  - curl -fsSL https://github.com/getsops/sops/releases/download/v3.9.1/sops-v3.9.1.linux.amd64 -o /usr/local/bin/sops
+  - echo "cd795109851c3a483bbaa66d15d19ddb2227ac0352b39e25d96b67d51edb6225  /usr/local/bin/sops" | sha256sum -c -
+  - chmod +x /usr/local/bin/sops
+  - systemctl restart ssh
 
-# Not done here, left as documented manual/deploy-workflow steps:
-# - node_exporter for the OTel → Grafana Cloud path (tech proposal §13)
-# - Tailscale, if administering from more than one place (tech proposal §11)
+# Not done here, left as tickets (docs/tickets/):
+# - node_exporter / OTel collector (005-observability-baseline)
+# - Cloudflare Origin Certificate for Caddy (002-caddy-origin-cert)

@@ -1,11 +1,15 @@
 #cloud-config
 # vm-db: installs Postgres 17 + pgBackRest directly on the host (not
 # containerized — tech proposal §11) and hardens SSH. Does NOT relocate
-# PGDATA to the attached volume, initialize the database, or configure
-# pgBackRest — those are deliberately left as manual/documented steps
-# (see infra/tofu/README.md "Bootstrap order"), because they're
-# site-specific enough that scripting them blind here would be a
-# half-verified guess rather than a real automation.
+# PGDATA to the attached volume, initialize the database, apply the 4 GB
+# tuning, or configure pgBackRest/PgBouncer — those are tracked in
+# docs/tickets/001-vm-db-bootstrap.md, because scripting them blind
+# here would be a half-verified guess rather than a real automation.
+#
+# This VM has no public IP. Outbound traffic (apt, PGDG, pgBackRest →
+# object storage) goes via vm-app: the hcloud_network_route in
+# network.tf plus the default route + DNS set below. Everything in
+# runcmd that reaches the internet depends on that route being up.
 
 users:
   - name: deploy
@@ -18,8 +22,10 @@ users:
 ssh_pwauth: false
 disable_root: true
 
-package_update: true
-package_upgrade: true
+# Deferred to runcmd (after the default route exists) — with no public
+# IP the standard package_update step would run before egress works.
+package_update: false
+package_upgrade: false
 
 write_files:
   - path: /etc/ssh/sshd_config.d/99-hardening.conf
@@ -28,7 +34,38 @@ write_files:
       PermitRootLogin no
       X11Forwarding no
 
+  # Default route via Hetzner's private-network gateway (10.0.0.1), which
+  # honours the 0.0.0.0/0 → vm-app route defined in network.tf. Runs as
+  # a unit rather than netplan because the private NIC's name differs by
+  # server type and the route target doesn't.
+  - path: /etc/systemd/system/noizera-default-route.service
+    content: |
+      [Unit]
+      Description=Default route via private network gateway (NAT on vm-app)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/bin/sh -c 'ip route replace default via 10.0.0.1'
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/resolved.conf.d/dns.conf
+    content: |
+      [Resolve]
+      DNS=185.12.64.1 185.12.64.2
+      FallbackDNS=1.1.1.1
+
 runcmd:
+  - systemctl daemon-reload
+  - systemctl enable --now noizera-default-route.service
+  - systemctl restart systemd-resolved
+  - apt-get update
+  - apt-get upgrade -y
+  - apt-get install -y ca-certificates curl gnupg fail2ban ufw
   # PostgreSQL 17 from the PGDG apt repo — verify against
   # postgresql.org/download/linux/ubuntu/ before relying on this if
   # it's been a while since this file was last checked.
@@ -41,8 +78,14 @@ runcmd:
     /etc/apt/sources.list.d/pgdg.list
   - apt-get update
   - apt-get install -y postgresql-17 pgbackrest
-  - systemctl restart sshd
-  # Postgres itself is left stopped/default-configured: relocating
-  # PGDATA onto the attached volume, applying the tuning in tech
-  # proposal §11 ("Postgres config for 4GB"), and wiring pgBackRest are
-  # manual next steps, not automated here.
+  # Host firewall is the real control here (Hetzner firewalls don't see
+  # private-network traffic): SSH and Postgres from the subnet only.
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow from 10.0.0.0/24 to any port 22 proto tcp
+  - ufw allow from 10.0.0.10 to any port 5432 proto tcp
+  - ufw --force enable
+  - systemctl enable --now fail2ban
+  - systemctl restart ssh
+  # Postgres itself is left stopped/default-configured — see the header
+  # and docs/tickets/001-vm-db-bootstrap.md.

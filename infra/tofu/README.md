@@ -5,9 +5,9 @@ Scaffolding only. **Nothing here has been applied** — no VM, network, bucket, 
 ## Layout
 
 - `versions.tf` — pinned provider versions (`hcloud`, `cloudflare`, `aws` — the `aws` provider targets Hetzner Object Storage's S3-compatible endpoint, not AWS)
-- `main.tf` — provider configuration
+- `main.tf` — provider configuration (the `aws` provider is pointed at Hetzner with path-style addressing and metadata/STS checks disabled)
 - `variables.tf` — all inputs; none has a secret default
-- `network.tf` — private network, subnet, firewalls (tech proposal §11)
+- `network.tf` — private network, subnet, NAT route for vm-db, firewalls (tech proposal §11; note Hetzner firewalls filter the public interface only)
 - `servers.tf` — vm-app, vm-db, the PGDATA volume (tech proposal §11)
 - `storage.tf` — media + backups buckets, versioning, lifecycle rules
 - `dns.tf` — Cloudflare records: app hostnames (proxied), edge hostname (unproxied, for on-demand TLS), mail SPF/DKIM/DMARC (tech proposal §9, §11.2)
@@ -17,6 +17,15 @@ Scaffolding only. **Nothing here has been applied** — no VM, network, bucket, 
 ## Bootstrap order (tech proposal §11.3)
 
 Object storage and DNS first, then network and firewalls, then servers — apply in that dependency order the first time rather than everything at once, so a partial failure is easy to reason about. cloud-init (see `../cloud-init/`) brings a VM to "Docker running, SSH hardened, user created" and stops; it does not deploy the application.
+
+vm-app must exist and have finished cloud-init (NAT service up) **before** vm-db is created — vm-db has no public IP and its cloud-init reaches apt/PGDG through vm-app. `servers.tf` encodes that with `depends_on`, but a manual `-target` apply has to respect it too.
+
+One-time manual steps after the first apply (not automatable from here):
+
+1. On vm-app: `tailscale up --advertise-tags=tag:server` with an auth key from the Tailscale admin console (ADR 001).
+2. On vm-app: place `/opt/noizera/age.key` (0600, owner `deploy`) and `/opt/noizera/infra/compose/.env.enc`.
+3. On vm-db: everything in `docs/tickets/001-vm-db-bootstrap.md`.
+4. Cloudflare Origin Certificate for Caddy: `docs/tickets/002-caddy-origin-cert.md`.
 
 ## State
 
