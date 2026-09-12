@@ -19,7 +19,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^7.0.0",
+    "@asteasolutions/zod-to-openapi": "^9.1.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
