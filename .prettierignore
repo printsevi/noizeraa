@@ -8,3 +8,4 @@ infra/tofu/**/*.tf
 infra/compose/Caddyfile
 *.enc
 docs/brief/
+.claude/skills/playwright-best-practices/

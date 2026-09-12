@@ -23,6 +23,11 @@ export default tseslint.config(
     languageOptions: { globals: globals.node, sourceType: "commonjs" },
   },
   {
+    // Claude Code hooks: Node ESM scripts.
+    files: [".claude/hooks/*.mjs"],
+    languageOptions: { globals: globals.node },
+  },
+  {
     // apps/web only: Next.js core-web-vitals rules + React hooks rules.
     files: ["apps/web/**/*.{ts,tsx}"],
     plugins: { "@next/next": nextPlugin, "react-hooks": reactHooks },
