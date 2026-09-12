@@ -1,0 +1,32 @@
+# Local development only — not used in deploy (see infra/compose/ for
+# that). Brings up the stateful services apps/api needs so `pnpm dev`
+# has something to connect to; matches .env.example's default URLs.
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: noizera
+      POSTGRES_PASSWORD: noizera
+      POSTGRES_DB: noizera
+    ports:
+      - "5432:5432"
+    volumes:
+      - noizera_postgres_dev:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672" # management UI
+
+  valkey:
+    image: valkey/valkey:8
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+volumes:
+  noizera_postgres_dev:

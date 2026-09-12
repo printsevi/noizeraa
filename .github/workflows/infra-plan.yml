@@ -1,0 +1,47 @@
+name: Infra plan
+
+# Tech proposal §11.3: "tofu plan on pull requests against infra/**,
+# apply manual and gated. Never on push to main." This workflow only
+# ever plans — see infra-apply.yml for the separate, manually-triggered
+# apply workflow.
+
+on:
+  pull_request:
+    paths:
+      - "infra/tofu/**"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/tofu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+      # State is committed SOPS-encrypted, not held in a remote backend
+      # (tech proposal §11.3) — decrypt it into place before `tofu init`
+      # if it exists yet (it won't on the very first plan ever run).
+      # Pin/verify this sops version against github.com/getsops/sops/releases.
+      - name: Install sops
+        run: |
+          curl -sL https://github.com/getsops/sops/releases/download/v3.9.1/sops-v3.9.1.linux.amd64 -o /usr/local/bin/sops
+          chmod +x /usr/local/bin/sops
+      - name: Decrypt state if present
+        run: |
+          if [ -f terraform.tfstate.enc ]; then
+            echo "$SOPS_AGE_KEY" > /tmp/age-key.txt
+            SOPS_AGE_KEY_FILE=/tmp/age-key.txt sops -d terraform.tfstate.enc > terraform.tfstate
+          fi
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+      - run: tofu init
+      - run: tofu plan -no-color
+        env:
+          TF_VAR_hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          TF_VAR_hetzner_s3_access_key: ${{ secrets.HETZNER_S3_ACCESS_KEY }}
+          TF_VAR_hetzner_s3_secret_key: ${{ secrets.HETZNER_S3_SECRET_KEY }}
+          TF_VAR_ssh_public_key: ${{ secrets.DEPLOY_SSH_PUBLIC_KEY }}
+          TF_VAR_admin_ip: ${{ secrets.ADMIN_IP }}

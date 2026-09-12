@@ -1,0 +1,134 @@
+name: CI/CD
+
+# Mirrors tech proposal §12: lint/typecheck/test on every push and PR;
+# build + push images and deploy only on push to main, and only after
+# every check job has passed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Integration tests use Testcontainers (real Postgres/RabbitMQ),
+      # which talks to the Docker daemon already available on this
+      # runner — no `services:` block needed (tech proposal §1).
+      - run: pnpm build
+      - run: pnpm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @noizera/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @noizera/web test:e2e
+
+  build-and-push:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, typecheck, test, e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}-api:${{ github.sha }},ghcr.io/${{ github.repository }}-api:latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}-web:${{ github.sha }},ghcr.io/${{ github.repository }}-web:latest
+
+  # This job will fail until vm-app actually exists (infra/tofu hasn't
+  # been applied — see infra/tofu/README.md), the deploy path
+  # /opt/noizera and its .env.enc are provisioned on the host, and
+  # apps/api ships a dist/migrate.js. It's scaffolded to match the exact
+  # sequence in tech proposal §12, not tested end to end yet.
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      # Tech proposal §12: sops-decrypt .env, pull, run the advisory-
+      # locked migration container, then bring the app up with zero
+      # downtime via Caddy's health-checked round-robin.
+      - name: Deploy to vm-app
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_APP_HOST }}
+          username: ${{ secrets.VM_APP_SSH_USER }}
+          key: ${{ secrets.VM_APP_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/noizera/infra/compose
+            # docker compose reads ${VAR} interpolation in the compose
+            # file itself from a .env in this directory (distinct from
+            # the env_file: directive, which only sets container env) —
+            # so both go here, not into the repo-root .env.
+            printf 'IMAGE_TAG=%s\nGHCR_OWNER_REPO=%s\n' \
+              "${{ github.sha }}" "${{ github.repository }}" > .env
+            sops -d .env.enc > ../../.env
+            docker compose pull
+            docker compose run --rm api node dist/migrate.js
+            docker compose up -d --no-deps --wait --scale api=2 api web worker-media worker-general

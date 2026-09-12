@@ -1,0 +1,63 @@
+name: Infra apply
+
+# Manual and gated, per tech proposal §11.3 — this is the ONLY workflow
+# that may run `tofu apply`, and only via an explicit human trigger.
+# Never wire this to push/pull_request. The `production` environment
+# should have required reviewers configured in repo settings so a
+# second person (or a deliberate second click) confirms before this
+# provisions real, billed Hetzner/Cloudflare resources.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "apply" to confirm you mean to provision real infrastructure'
+        required: true
+
+jobs:
+  apply:
+    if: github.event.inputs.confirm == 'apply'
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: infra/tofu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+      # Pin/verify this sops version against github.com/getsops/sops/releases.
+      - name: Install sops
+        run: |
+          curl -sL https://github.com/getsops/sops/releases/download/v3.9.1/sops-v3.9.1.linux.amd64 -o /usr/local/bin/sops
+          chmod +x /usr/local/bin/sops
+      - name: Decrypt state if present
+        run: |
+          if [ -f terraform.tfstate.enc ]; then
+            echo "$SOPS_AGE_KEY" > /tmp/age-key.txt
+            SOPS_AGE_KEY_FILE=/tmp/age-key.txt sops -d terraform.tfstate.enc > terraform.tfstate
+          fi
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+      - run: tofu init
+      - run: tofu apply -auto-approve
+        env:
+          TF_VAR_hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          TF_VAR_hetzner_s3_access_key: ${{ secrets.HETZNER_S3_ACCESS_KEY }}
+          TF_VAR_hetzner_s3_secret_key: ${{ secrets.HETZNER_S3_SECRET_KEY }}
+          TF_VAR_ssh_public_key: ${{ secrets.DEPLOY_SSH_PUBLIC_KEY }}
+          TF_VAR_admin_ip: ${{ secrets.ADMIN_IP }}
+      # State changed — re-encrypt and commit it back, since it's not in
+      # a remote backend (tech proposal §11.3). Without this, the next
+      # plan/apply run has no memory of what was just created.
+      - name: Encrypt and commit state
+        run: |
+          SOPS_AGE_KEY_FILE=/tmp/age-key.txt sops -e --age "$AGE_PUBLIC_KEY" terraform.tfstate > terraform.tfstate.enc
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add terraform.tfstate.enc
+          git commit -m "chore(infra): update encrypted tfstate after apply" || echo "no changes to commit"
+          git push
+        env:
+          AGE_PUBLIC_KEY: ${{ secrets.SOPS_AGE_PUBLIC_KEY }}

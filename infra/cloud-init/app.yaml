@@ -1,0 +1,56 @@
+#cloud-config
+# vm-app: brings the VM to "Docker running, SSH hardened, user created"
+# and stops — it does not deploy the application (tech proposal §11.3).
+# The GitHub Actions deploy workflow (see docs/brief/tech-proposal/...
+# §12) handles everything after this.
+
+users:
+  - name: deploy
+    groups: [docker, sudo]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - "${ssh_public_key}"
+
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - fail2ban
+  - ca-certificates
+  - curl
+  - gnupg
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-hardening.conf
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin no
+      X11Forwarding no
+
+runcmd:
+  # Docker Engine + Compose plugin, per Docker's own apt install method —
+  # verify against current docs.docker.com before relying on this if it's
+  # been a while since this file was last checked.
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - >
+    echo "deb [arch=$(dpkg --print-architecture)
+    signed-by=/etc/apt/keyrings/docker.asc]
+    https://download.docker.com/linux/ubuntu
+    $(. /etc/os-release && echo $VERSION_CODENAME) stable" >
+    /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - systemctl enable --now docker
+  - systemctl enable --now fail2ban
+  - usermod -aG docker deploy
+  - systemctl restart sshd
+
+# Not done here, left as documented manual/deploy-workflow steps:
+# - node_exporter for the OTel → Grafana Cloud path (tech proposal §13)
+# - Tailscale, if administering from more than one place (tech proposal §11)

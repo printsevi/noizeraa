@@ -1,0 +1,48 @@
+#cloud-config
+# vm-db: installs Postgres 17 + pgBackRest directly on the host (not
+# containerized — tech proposal §11) and hardens SSH. Does NOT relocate
+# PGDATA to the attached volume, initialize the database, or configure
+# pgBackRest — those are deliberately left as manual/documented steps
+# (see infra/tofu/README.md "Bootstrap order"), because they're
+# site-specific enough that scripting them blind here would be a
+# half-verified guess rather than a real automation.
+
+users:
+  - name: deploy
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - "${ssh_public_key}"
+
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+package_upgrade: true
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-hardening.conf
+    content: |
+      PasswordAuthentication no
+      PermitRootLogin no
+      X11Forwarding no
+
+runcmd:
+  # PostgreSQL 17 from the PGDG apt repo — verify against
+  # postgresql.org/download/linux/ubuntu/ before relying on this if
+  # it's been a while since this file was last checked.
+  - install -d -m 0755 /etc/apt/keyrings
+  - curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /etc/apt/keyrings/postgresql.asc
+  - >
+    echo "deb [signed-by=/etc/apt/keyrings/postgresql.asc]
+    http://apt.postgresql.org/pub/repos/apt
+    $(. /etc/os-release && echo $VERSION_CODENAME)-pgdg main" >
+    /etc/apt/sources.list.d/pgdg.list
+  - apt-get update
+  - apt-get install -y postgresql-17 pgbackrest
+  - systemctl restart sshd
+  # Postgres itself is left stopped/default-configured: relocating
+  # PGDATA onto the attached volume, applying the tuning in tech
+  # proposal §11 ("Postgres config for 4GB"), and wiring pgBackRest are
+  # manual next steps, not automated here.

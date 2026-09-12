@@ -1,0 +1,89 @@
+# Runs on vm-app. All four `api`/worker roles share one image
+# (apps/api), selected by APP_ROLE — tech proposal §2. `api` is meant to
+# run with 2 replicas behind Caddy's least_conn (tech proposal §11.1):
+#   docker compose up -d --no-deps --wait --scale api=2 api web workers
+#
+# ${IMAGE_TAG} / ${GHCR_OWNER_REPO} are compose-file interpolation, read
+# from a .env in THIS directory (infra/compose/.env) — not the same file
+# as ../../.env below, which is decrypted secrets injected into
+# containers via env_file:. The deploy workflow (.github/workflows/ci-cd.yml)
+# writes both files on every deploy.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - web
+
+  web:
+    image: ghcr.io/${GHCR_OWNER_REPO}-web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: ../../.env
+    expose:
+      - "3000"
+
+  api:
+    image: ghcr.io/${GHCR_OWNER_REPO}-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      APP_ROLE: api
+    expose:
+      - "3000"
+    depends_on:
+      - rabbitmq
+      - valkey
+
+  worker-media:
+    image: ghcr.io/${GHCR_OWNER_REPO}-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      APP_ROLE: worker-media
+    cpus: 2
+    depends_on:
+      - rabbitmq
+
+  worker-general:
+    image: ghcr.io/${GHCR_OWNER_REPO}-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      APP_ROLE: worker-general
+    depends_on:
+      - rabbitmq
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    restart: unless-stopped
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  valkey:
+    image: valkey/valkey:8
+    restart: unless-stopped
+    volumes:
+      - valkey_data:/data
+
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    restart: unless-stopped
+    env_file: ../../.env
+    expose:
+      - "3000"
+
+volumes:
+  caddy_data:
+  caddy_config:
+  rabbitmq_data:
+  valkey_data:
