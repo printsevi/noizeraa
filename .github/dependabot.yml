@@ -1,0 +1,34 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned actions in .github/workflows current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dev-tooling:
+        dependency-type: development
+        patterns: ["*"]
+      nest:
+        patterns: ["@nestjs/*"]
+      next:
+        patterns: ["next", "react", "react-dom", "@types/react*", "@next/*"]
+
+  - package-ecosystem: docker
+    directories: ["/apps/api", "/apps/web"]
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: terraform
+    directory: /infra/tofu
+    schedule:
+      interval: monthly

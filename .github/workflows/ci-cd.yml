@@ -2,39 +2,61 @@ name: CI/CD
 
 # Mirrors tech proposal §12: lint/typecheck/test on every push and PR;
 # build + push images and deploy only on push to main, and only after
-# every check job has passed.
+# every check job has passed. `workflow_dispatch` with a `sha` input
+# redeploys a previously built image (rollback) without rebuilding.
+#
+# Actions are pinned to commit SHAs (the tag is kept in a comment for
+# readability); update via Dependabot PRs, not by hand.
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full commit SHA of an already-pushed image to (re)deploy — rollback path"
+        required: true
+
+permissions: {}
 
 concurrency:
   group: ci-cd-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   NODE_VERSION: "22"
 
 jobs:
   lint:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      # `pnpm lint` = eslint per package + dependency-cruiser boundary
+      # rules (.dependency-cruiser.cjs). The latter needs built dist/
+      # output to resolve workspace imports, hence the build first.
+      - run: pnpm build --filter='./packages/*'
       - run: pnpm lint
 
   typecheck:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -42,11 +64,14 @@ jobs:
       - run: pnpm typecheck
 
   test:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -58,15 +83,19 @@ jobs:
       - run: pnpm test
 
   e2e:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build --filter='./packages/*'
       - run: pnpm --filter @noizera/web exec playwright install --with-deps chromium
       - run: pnpm --filter @noizera/web test:e2e
 
@@ -78,45 +107,81 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/api/Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository }}-api:${{ github.sha }},ghcr.io/${{ github.repository }}-api:latest
-      - uses: docker/build-push-action@v6
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/web/Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository }}-web:${{ github.sha }},ghcr.io/${{ github.repository }}-web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  # This job will fail until vm-app actually exists (infra/tofu hasn't
-  # been applied — see infra/tofu/README.md), the deploy path
-  # /opt/noizera and its .env.enc are provisioned on the host, and
-  # apps/api ships a dist/migrate.js. It's scaffolded to match the exact
-  # sequence in tech proposal §12, not tested end to end yet.
+  # Runs after build-and-push on main, or standalone from
+  # workflow_dispatch with a previously built `sha` (rollback).
+  #
+  # Reaches vm-app over Tailscale (ADR 001): the runner joins the tailnet
+  # as an ephemeral node tagged `tag:ci`; the tailnet ACL allows
+  # tag:ci → tag:server:22 only. Public port 22 stays restricted to
+  # `admin_ip` as break-glass and is never opened to GitHub's IP ranges.
+  #
+  # Still requires, on the host: /opt/noizera/infra/compose/.env.enc and
+  # the sops age key at /opt/noizera/age.key (provisioned once by hand),
+  # and apps/api shipping dist/migrate.js (docs/tickets/003).
   deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # On workflow_dispatch build-and-push is skipped, which would skip
+    # this job too by default — hence `!cancelled()` plus an explicit
+    # check that the build either succeeded or was skipped (never failed).
+    if: |
+      !cancelled() &&
+      (needs.build-and-push.result == 'success' || needs.build-and-push.result == 'skipped') &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch')
     needs: [build-and-push]
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+    env:
+      DEPLOY_SHA: ${{ github.event.inputs.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
-      # Tech proposal §12: sops-decrypt .env, pull, run the advisory-
-      # locked migration container, then bring the app up with zero
-      # downtime via Caddy's health-checked round-robin.
-      - name: Deploy to vm-app
-        uses: appleboy/ssh-action@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          host: ${{ secrets.VM_APP_HOST }}
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade # v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      # Compose and Caddy config come from the repo at the deployed sha
+      # — the host never holds a git checkout, just these files.
+      - name: Sync infra/compose to vm-app
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VM_APP_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          rsync -az --delete \
+            --exclude '.env' --exclude '.env.enc' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
+            infra/compose/ \
+            "${{ secrets.VM_APP_SSH_USER }}@${{ secrets.VM_APP_TAILSCALE_HOST }}:/opt/noizera/infra/compose/"
+      - name: Deploy to vm-app
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
+        with:
+          host: ${{ secrets.VM_APP_TAILSCALE_HOST }}
           username: ${{ secrets.VM_APP_SSH_USER }}
           key: ${{ secrets.VM_APP_SSH_KEY }}
           script: |
@@ -127,8 +192,8 @@ jobs:
             # the env_file: directive, which only sets container env) —
             # so both go here, not into the repo-root .env.
             printf 'IMAGE_TAG=%s\nGHCR_OWNER_REPO=%s\n' \
-              "${{ github.sha }}" "${{ github.repository }}" > .env
-            sops -d .env.enc > ../../.env
+              "${{ env.DEPLOY_SHA }}" "${{ github.repository }}" > .env
+            SOPS_AGE_KEY_FILE=/opt/noizera/age.key sops -d .env.enc > ../../.env
             docker compose pull
             docker compose run --rm api node dist/migrate.js
             docker compose up -d --no-deps --wait --scale api=2 api web worker-media worker-general

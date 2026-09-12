@@ -1,0 +1,10 @@
+node_modules
+dist
+.next
+.turbo
+coverage
+pnpm-lock.yaml
+infra/tofu/**/*.tf
+infra/compose/Caddyfile
+*.enc
+docs/brief/

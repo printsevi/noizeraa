@@ -41,7 +41,8 @@ class InvitationService {
 ```typescript
 // GOOD: each function is independently mockable
 const stripe = {
-  createCheckoutSession: (params) => stripeClient.checkout.sessions.create(params),
+  createCheckoutSession: (params) =>
+    stripeClient.checkout.sessions.create(params),
   syncSubscription: (id) => stripeClient.subscriptions.retrieve(id),
 };
 

@@ -1,4 +1,7 @@
-* text=auto eol=crlf
+# LF everywhere: the deploy target, Docker images, CI runners and
+# cloud-init/Caddy/Tofu consumers are all Linux, and git stores blobs as
+# LF regardless. Editors on Windows handle LF without friction.
+* text=auto eol=lf
 
 *.png binary
 *.jpg binary

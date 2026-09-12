@@ -1,0 +1,13 @@
+# Git hooks, installed by `pnpm install` (root "prepare" script).
+# Kept fast: format/lint only the staged files; the full suite is CI's job.
+
+pre-commit:
+  parallel: true
+  commands:
+    lint-staged:
+      run: pnpm exec lint-staged
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}

@@ -14,32 +14,46 @@ on:
         description: 'Type "apply" to confirm you mean to provision real infrastructure'
         required: true
 
+permissions: {}
+
+concurrency:
+  group: infra-apply
+  cancel-in-progress: false
+
 jobs:
   apply:
     if: github.event.inputs.confirm == 'apply'
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: write # commits the re-encrypted state back
     defaults:
       run:
         working-directory: infra/tofu
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
-      # Pin/verify this sops version against github.com/getsops/sops/releases.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1
       - name: Install sops
+        env:
+          SOPS_VERSION: v3.9.1
+          # From sops-<version>.checksums.txt on the release — update alongside the version.
+          SOPS_SHA256: cd795109851c3a483bbaa66d15d19ddb2227ac0352b39e25d96b67d51edb6225
         run: |
-          curl -sL https://github.com/getsops/sops/releases/download/v3.9.1/sops-v3.9.1.linux.amd64 -o /usr/local/bin/sops
+          curl -sSL "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64" -o /usr/local/bin/sops
+          echo "${SOPS_SHA256}  /usr/local/bin/sops" | sha256sum -c -
           chmod +x /usr/local/bin/sops
       - name: Decrypt state if present
         run: |
+          umask 077
+          printf '%s\n' "$SOPS_AGE_KEY" > /tmp/age-key.txt
           if [ -f terraform.tfstate.enc ]; then
-            echo "$SOPS_AGE_KEY" > /tmp/age-key.txt
             SOPS_AGE_KEY_FILE=/tmp/age-key.txt sops -d terraform.tfstate.enc > terraform.tfstate
           fi
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-      - run: tofu init
-      - run: tofu apply -auto-approve
+      - id: init
+        run: tofu init -input=false
+      - run: tofu apply -auto-approve -input=false
         env:
           TF_VAR_hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
           TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -50,14 +64,17 @@ jobs:
           TF_VAR_admin_ip: ${{ secrets.ADMIN_IP }}
       # State changed — re-encrypt and commit it back, since it's not in
       # a remote backend (tech proposal §11.3). Without this, the next
-      # plan/apply run has no memory of what was just created.
+      # plan/apply run has no memory of what was just created. Runs even
+      # if apply failed part-way: a partial apply still changed state.
       - name: Encrypt and commit state
+        if: always() && steps.init.outcome != 'failure'
         run: |
+          [ -f terraform.tfstate ] || { echo "no state file produced"; exit 0; }
           SOPS_AGE_KEY_FILE=/tmp/age-key.txt sops -e --age "$AGE_PUBLIC_KEY" terraform.tfstate > terraform.tfstate.enc
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add terraform.tfstate.enc
-          git commit -m "chore(infra): update encrypted tfstate after apply" || echo "no changes to commit"
+          git commit -m "infra: update encrypted tfstate after apply" || { echo "no changes to commit"; exit 0; }
           git push
         env:
           AGE_PUBLIC_KEY: ${{ secrets.SOPS_AGE_PUBLIC_KEY }}

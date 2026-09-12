@@ -11,7 +11,7 @@ Interview the user relentlessly about the plan until you reach a shared understa
 
 Every decision in the plan branches into the decisions that hang off it. Before asking anything, sketch that tree silently: what has to be decided, and what each decision depends on.
 
-Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled — the questions you can ask *now* without guessing at answers you haven't heard yet. Ask the whole frontier in one round: number each question and give your recommended answer. Then wait for the user's answers before the next round.
+Work the tree in **rounds**. The **frontier** is every decision whose prerequisites are already settled — the questions you can ask _now_ without guessing at answers you haven't heard yet. Ask the whole frontier in one round: number each question and give your recommended answer. Then wait for the user's answers before the next round.
 
 Format a round like this:
 
@@ -27,7 +27,7 @@ Format a round like this:
 ➡️ <your recommended answer>
 ```
 
-Each round the user answers reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a *later* round, not this one.
+Each round the user answers reshapes the tree: settled decisions push the frontier outward and unblock questions that depended on them. Recompute the frontier and ask the next round. A question whose answer depends on another question still open in this round belongs to a _later_ round, not this one.
 
 **Finding facts is your job, never the user's.** When a frontier question needs a fact from the environment (the codebase, the docs, a running service), dispatch a sub-agent or read the file yourself — don't ask the user for anything you could look up. Don't block the whole round on it: a running exploration is an unsettled prerequisite, so only the questions downstream of it wait; ask the rest of the frontier now.
 

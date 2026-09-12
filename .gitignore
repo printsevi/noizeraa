@@ -3,16 +3,21 @@ dist/
 .next/
 .turbo/
 coverage/
+*.tsbuildinfo
 .env
 .env.*.local
 *.log
 *.stackdump
+
+# playwright
+test-results/
+playwright-report/
 
 # terraform / opentofu — state is committed only when SOPS-encrypted
 # (tech proposal §11.3); never commit plaintext state or real tfvars.
 **/.terraform/
 *.tfstate
 *.tfstate.*
-!*.tfstate.*.enc
+!terraform.tfstate.enc
 terraform.tfvars
 !terraform.tfvars.example

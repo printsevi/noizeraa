@@ -4,6 +4,6 @@ Human-readable session summaries and reusable playbooks — **not referenced fro
 
 One file per notable session, named `YYYY-MM-DD-short-slug.md`.
 
-| Date | File | What it covers |
-|---|---|---|
+| Date       | File                                                           | What it covers                                                                                                                                                                                              |
+| ---------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-09-12 | [`2026-09-12-project-setup.md`](./2026-09-12-project-setup.md) | Setting up Claude Code skills (grill-me, tdd), the monorepo scaffold, doc categories, Hetzner/OpenTofu infra, Docker, and GitHub Actions CI/CD for a project from a pitch + tech proposal with no code yet. |

@@ -1,0 +1,8 @@
+# Solo project today; these paths are the ones where a second reviewer
+# should be required first when one exists (billing money paths, infra
+# that costs money, the docs that define decisions).
+*                                   @printsevi
+/infra/                             @printsevi
+/.github/workflows/                 @printsevi
+/docs/adrs/                         @printsevi
+/docs/brief/                        @printsevi

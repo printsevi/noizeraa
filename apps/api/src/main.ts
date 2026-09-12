@@ -16,8 +16,9 @@ async function bootstrap() {
   // yet — see the module list in CLAUDE.md — so this just keeps the
   // process alive until the first one is added, test-first.
   await NestFactory.createApplicationContext(AppModule);
-  // eslint-disable-next-line no-console
-  console.log(`noizera api started with APP_ROLE=${APP_ROLE} (no consumers registered yet)`);
+  console.log(
+    `noizera api started with APP_ROLE=${APP_ROLE} (no consumers registered yet)`,
+  );
 }
 
 void bootstrap();

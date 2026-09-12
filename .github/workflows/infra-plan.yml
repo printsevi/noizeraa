@@ -9,34 +9,48 @@ on:
   pull_request:
     paths:
       - "infra/tofu/**"
+      - "infra/cloud-init/**" # consumed via templatefile() in servers.tf
+
+permissions: {}
 
 jobs:
   plan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # to post the plan as a PR comment
     defaults:
       run:
         working-directory: infra/tofu
     steps:
-      - uses: actions/checkout@v4
-      - uses: opentofu/setup-opentofu@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f # v1
       # State is committed SOPS-encrypted, not held in a remote backend
       # (tech proposal §11.3) — decrypt it into place before `tofu init`
       # if it exists yet (it won't on the very first plan ever run).
-      # Pin/verify this sops version against github.com/getsops/sops/releases.
       - name: Install sops
+        env:
+          SOPS_VERSION: v3.9.1
+          # From sops-<version>.checksums.txt on the release — update alongside the version.
+          SOPS_SHA256: cd795109851c3a483bbaa66d15d19ddb2227ac0352b39e25d96b67d51edb6225
         run: |
-          curl -sL https://github.com/getsops/sops/releases/download/v3.9.1/sops-v3.9.1.linux.amd64 -o /usr/local/bin/sops
+          curl -sSL "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.amd64" -o /usr/local/bin/sops
+          echo "${SOPS_SHA256}  /usr/local/bin/sops" | sha256sum -c -
           chmod +x /usr/local/bin/sops
       - name: Decrypt state if present
         run: |
           if [ -f terraform.tfstate.enc ]; then
-            echo "$SOPS_AGE_KEY" > /tmp/age-key.txt
+            umask 077
+            printf '%s\n' "$SOPS_AGE_KEY" > /tmp/age-key.txt
             SOPS_AGE_KEY_FILE=/tmp/age-key.txt sops -d terraform.tfstate.enc > terraform.tfstate
           fi
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-      - run: tofu init
-      - run: tofu plan -no-color
+      - run: tofu fmt -check -recursive
+      - run: tofu init -input=false
+      - run: tofu validate
+      - id: plan
+        run: tofu plan -no-color -input=false -out=tfplan | tee plan.txt
         env:
           TF_VAR_hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
           TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -45,3 +59,15 @@ jobs:
           TF_VAR_hetzner_s3_secret_key: ${{ secrets.HETZNER_S3_SECRET_KEY }}
           TF_VAR_ssh_public_key: ${{ secrets.DEPLOY_SSH_PUBLIC_KEY }}
           TF_VAR_admin_ip: ${{ secrets.ADMIN_IP }}
+      - name: Comment plan on PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo '### `tofu plan` for `infra/`'
+            echo
+            echo '```'
+            tail -c 60000 plan.txt
+            echo '```'
+          } > comment.md
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
