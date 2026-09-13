@@ -11,6 +11,7 @@ Scope: the nine-week build in §7 of the pitch (features 1–14), the infrastruc
 - §11 / §12: CI reaches vm-app over Tailscale, with public SSH kept to the admin IP as break-glass — ADR 001. Tailscale added to the §14 subprocessor list.
 - §11: Hetzner Cloud Firewalls filter the public interface only; the "5432 only from vm-app's private IP" rule is enforced by ufw + `pg_hba` on vm-db, not by the cloud firewall. vm-db reaches the internet through NAT on vm-app.
 - §13: Umami deferred (it was already on the §16 cut list); tracked as `docs/tickets/007-umami.md`.
+- §11/§15: both VMs run Hetzner's CX line at `cx23` (2 vCPU/4 GB each) instead of CPX32/CPX22 — ADR 002. Lower cost than the §15 table, at the cost of vm-app's vCPU count and the availability risk §15 already flagged for the CX/CAX line.
 
 ---
 

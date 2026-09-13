@@ -18,6 +18,16 @@ resource "aws_s3_bucket_versioning" "media" {
 
 # Renditions are regenerable from originals — expire orphaned ones
 # rather than keeping them indefinitely (tech proposal §11 "Backups").
+#
+# On first apply against Hetzner, this resource's PUT succeeds but the
+# provider's post-write read-back waiter times out after 3 minutes
+# (Hetzner's Object Storage doesn't seem to reflect the change on the
+# same timeline AWS S3 does) — the rule was confirmed present via a
+# direct signed GET regardless, and imported into state rather than
+# re-applied. `transition_default_minimum_object_size` is a newer
+# provider-side default with no equivalent in Hetzner's response, so
+# it perpetually drifts; ignored here so a routine `apply` never
+# re-triggers that same timeout by trying to "fix" it.
 resource "aws_s3_bucket_lifecycle_configuration" "media" {
   bucket = aws_s3_bucket.media.id
 
@@ -32,6 +42,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
     expiration {
       days = 30
     }
+  }
+
+  lifecycle {
+    ignore_changes = [transition_default_minimum_object_size]
   }
 }
 

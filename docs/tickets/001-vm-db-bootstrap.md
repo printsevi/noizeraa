@@ -1,5 +1,5 @@
 ---
-status: open
+status: in-progress
 module: infra
 ---
 
@@ -35,3 +35,5 @@ Infra — verified by hand on the first apply: `psql` from vm-app over the priva
 ## Done when
 
 All five "In" items are live on vm-db, the runbook (or cloud-init) that produced them is committed, and `docker compose run --rm api node dist/migrate.js` from vm-app succeeds against it.
+
+**Status note:** all five "In" items are scripted in `infra/cloud-init/db.yaml` (volume mount + PGDATA relocation, tuning, `noizera` role/database + pg_hba, pgBackRest stanza + weekly/daily timers) and PgBouncer is a compose service in `infra/compose/docker-compose.yml`; the runbook for what still needs verifying by hand on the first real apply is in `infra/tofu/README.md`. Left `in-progress` rather than `done` because none of it has run against a real VM yet — no `tofu apply` has been done — and `docker compose run --rm api node dist/migrate.js` is blocked on `dist/migrate.js` existing (ticket 003).

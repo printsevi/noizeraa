@@ -30,7 +30,13 @@ variable "hetzner_s3_secret_key" {
 variable "hetzner_s3_endpoint" {
   description = "Hetzner Object Storage S3-compatible endpoint for the target region"
   type        = string
-  default     = "https://fsn1.your-objectstorage.com"
+  default     = "https://nbg1.your-objectstorage.com"
+}
+
+variable "db_app_password" {
+  description = "Password for the app's Postgres role on vm-db (also goes into infra/compose/.env.enc as part of DATABASE_URL — the two must be kept in sync by hand, see docs/tickets/001-vm-db-bootstrap.md)"
+  type        = string
+  sensitive   = true
 }
 
 variable "ssh_public_key" {

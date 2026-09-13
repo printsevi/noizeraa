@@ -10,11 +10,20 @@ provider "cloudflare" {
   api_token = var.cloudflare_api_token
 }
 
+# Hetzner Object Storage's "region" is really its datacenter location
+# (fsn1/nbg1/hel1) and the S3 API rejects a CreateBucket whose region
+# doesn't match the location implied by the endpoint host
+# (LocationConstraintConflict) — so derive it from hetzner_s3_endpoint
+# instead of hardcoding a value that can drift out of sync with it.
+locals {
+  hetzner_s3_region = split(".", replace(var.hetzner_s3_endpoint, "https://", ""))[0]
+}
+
 # Hetzner Object Storage is S3-compatible; managed via the aws provider
 # pointed at its endpoint rather than at AWS itself. See storage.tf and
 # the caveat in README.md about unconfirmed API parity.
 provider "aws" {
-  region     = "eu-central-1"
+  region     = local.hetzner_s3_region
   access_key = var.hetzner_s3_access_key
   secret_key = var.hetzner_s3_secret_key
 

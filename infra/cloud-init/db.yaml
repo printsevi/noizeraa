@@ -1,10 +1,17 @@
 #cloud-config
 # vm-db: installs Postgres 17 + pgBackRest directly on the host (not
-# containerized — tech proposal §11) and hardens SSH. Does NOT relocate
-# PGDATA to the attached volume, initialize the database, apply the 4 GB
-# tuning, or configure pgBackRest/PgBouncer — those are tracked in
-# docs/tickets/001-vm-db-bootstrap.md, because scripting them blind
-# here would be a half-verified guess rather than a real automation.
+# containerized — tech proposal §11), relocates PGDATA onto the attached
+# volume, applies the 4 GB tuning block, and wires up pgBackRest against
+# the backups bucket (docs/tickets/001-vm-db-bootstrap.md). PgBouncer
+# lives on vm-app instead (compose service, transaction mode) — see
+# infra/compose/docker-compose.yml.
+#
+# The one thing NOT confirmed against a real VM yet is the volume device
+# path below (`/dev/disk/by-id/scsi-0HC_Volume_<id>`) — that's Hetzner's
+# documented naming convention, but verify it on the first apply before
+# trusting this blindly; the mount uses `nofail` specifically so a wrong
+# path fails the mount, not the boot. See infra/tofu/README.md for the
+# by-hand recovery if it's wrong, and the ticket's "Open questions".
 #
 # This VM has no public IP. Outbound traffic (apt, PGDG, pgBackRest →
 # object storage) goes via vm-app: the hcloud_network_route in
@@ -59,6 +66,103 @@ write_files:
       DNS=185.12.64.1 185.12.64.2
       FallbackDNS=1.1.1.1
 
+  # Tuning for the 4 GB server_type (tech proposal §11). Debian/PGDG
+  # clusters load conf.d/*.conf after postgresql.conf, so this overrides
+  # without editing the packaged file. archive_mode/archive_command here
+  # only take effect after the restart in runcmd, once pgbackrest.conf
+  # (below) also exists.
+  - path: /etc/postgresql/17/main/conf.d/99-noizera-tuning.conf
+    content: |
+      listen_addresses = '10.0.0.20'
+      shared_buffers = '1GB'
+      effective_cache_size = '3GB'
+      work_mem = '16MB'
+      max_connections = 100
+      shared_preload_libraries = 'pg_stat_statements'
+      archive_mode = on
+      archive_command = 'pgbackrest --stanza=noizera archive-push %p'
+
+  # S3 (Hetzner Object Storage) repo for pgBackRest. Credentials come
+  # through from the same tofu vars as storage.tf's aws provider block —
+  # see docs/tickets/001-vm-db-bootstrap.md for the retention rationale.
+  - path: /etc/pgbackrest.conf
+    permissions: "0600"
+    content: |
+      [global]
+      repo1-type=s3
+      repo1-s3-bucket=${backups_bucket}
+      repo1-s3-endpoint=${hetzner_s3_endpoint}
+      repo1-s3-region=eu-central-1
+      repo1-s3-key=${hetzner_s3_access_key}
+      repo1-s3-key-secret=${hetzner_s3_secret_key}
+      repo1-retention-full=30
+      repo1-retention-full-type=time
+      process-max=2
+      log-level-console=info
+
+      [noizera]
+      pg1-path=/var/lib/postgresql/17/main
+      pg1-port=5432
+
+  - path: /etc/systemd/system/noizera-pgbackrest-full.service
+    content: |
+      [Unit]
+      Description=pgBackRest full backup
+      After=postgresql.service
+
+      [Service]
+      Type=oneshot
+      User=postgres
+      ExecStart=/usr/bin/pgbackrest --stanza=noizera --type=full backup
+
+  - path: /etc/systemd/system/noizera-pgbackrest-full.timer
+    content: |
+      [Unit]
+      Description=Weekly pgBackRest full backup
+
+      [Timer]
+      OnCalendar=Sun 03:00
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+
+  - path: /etc/systemd/system/noizera-pgbackrest-incr.service
+    content: |
+      [Unit]
+      Description=pgBackRest incremental backup
+      After=postgresql.service
+
+      [Service]
+      Type=oneshot
+      User=postgres
+      ExecStart=/usr/bin/pgbackrest --stanza=noizera --type=incr backup
+
+  - path: /etc/systemd/system/noizera-pgbackrest-incr.timer
+    content: |
+      [Unit]
+      Description=Daily pgBackRest incremental backup (skipped the day the full backup runs)
+
+      [Timer]
+      OnCalendar=Mon..Sat 03:00
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+
+  # Kept out of runcmd's own command line (which cloud-init logs verbatim
+  # to /var/log/cloud-init-output.log) so the password isn't echoed there;
+  # the file itself is shredded once used. It's still readable via the
+  # Hetzner metadata API to anyone with hcloud API access, same as the S3
+  # keys above — no worse than the existing trust boundary.
+  - path: /root/bootstrap-role.sql
+    permissions: "0600"
+    content: |
+      CREATE ROLE noizera LOGIN PASSWORD '${db_app_password}';
+      CREATE DATABASE noizera OWNER noizera;
+      \c noizera
+      CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
 runcmd:
   - systemctl daemon-reload
   - systemctl enable --now noizera-default-route.service
@@ -87,5 +191,39 @@ runcmd:
   - ufw --force enable
   - systemctl enable --now fail2ban
   - systemctl restart ssh
-  # Postgres itself is left stopped/default-configured — see the header
-  # and docs/tickets/001-vm-db-bootstrap.md.
+  # --- PGDATA relocation onto the attached volume ---
+  # apt's postinst already created a cluster on the root disk via
+  # pg_createcluster; move its contents onto the volume, then mount the
+  # volume at the cluster's normal path so nothing else about the
+  # Debian/PGDG cluster layout has to change.
+  - systemctl stop postgresql
+  - mkdir -p /mnt/pgdata-init
+  - mount /dev/disk/by-id/scsi-0HC_Volume_${pgdata_volume_id} /mnt/pgdata-init
+  - rsync -a /var/lib/postgresql/17/main/ /mnt/pgdata-init/
+  - umount /mnt/pgdata-init
+  - rmdir /mnt/pgdata-init
+  - >
+    echo "/dev/disk/by-id/scsi-0HC_Volume_${pgdata_volume_id}
+    /var/lib/postgresql/17/main ext4 defaults,nofail 0 2" >> /etc/fstab
+  - mount /var/lib/postgresql/17/main
+  - chown -R postgres:postgres /var/lib/postgresql/17/main
+  - chmod 0700 /var/lib/postgresql/17/main
+  # Restrict remote access to the app role only, from vm-app's private
+  # IP, over scram-sha-256 (tech proposal §11 / ticket 001). The packaged
+  # default pg_hba.conf has no rule for the private subnet, so this is
+  # purely additive — nothing else remote-facing is allowed in.
+  - >
+    echo "host    noizera    noizera    10.0.0.10/32    scram-sha-256" >>
+    /etc/postgresql/17/main/pg_hba.conf
+  - systemctl start postgresql
+  # App role + database (password also lives in infra/compose/.env.enc's
+  # DATABASE_URL — the two are kept in sync by hand, see the ticket).
+  - sudo -u postgres psql -v ON_ERROR_STOP=1 -f /root/bootstrap-role.sql
+  - shred -u /root/bootstrap-role.sql
+  # pgBackRest: create the repo + stanza, then verify the archive path.
+  - install -d -m 0750 -o postgres -g postgres /var/log/pgbackrest
+  - sudo -u postgres pgbackrest --stanza=noizera stanza-create
+  - sudo -u postgres pgbackrest --stanza=noizera check
+  - systemctl daemon-reload
+  - systemctl enable --now noizera-pgbackrest-full.timer
+  - systemctl enable --now noizera-pgbackrest-incr.timer

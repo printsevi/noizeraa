@@ -8,15 +8,15 @@ resource "hcloud_ssh_key" "deploy" {
 resource "hcloud_volume" "pgdata" {
   name     = "noizera-pgdata-${var.environment}"
   size     = 40
-  location = "fsn1"
+  location = "nbg1"
   format   = "ext4"
 }
 
 resource "hcloud_server" "app" {
   name         = "noizera-vm-app-${var.environment}"
-  server_type  = "cpx32"
+  server_type  = "cx23"
   image        = "ubuntu-24.04"
-  location     = "fsn1"
+  location     = "nbg1"
   ssh_keys     = [hcloud_ssh_key.deploy.id]
   firewall_ids = [hcloud_firewall.app.id]
   user_data = templatefile("${path.module}/../cloud-init/app.yaml", {
@@ -33,13 +33,19 @@ resource "hcloud_server" "app" {
 
 resource "hcloud_server" "db" {
   name         = "noizera-vm-db-${var.environment}"
-  server_type  = "cpx22"
+  server_type  = "cx23"
   image        = "ubuntu-24.04"
-  location     = "fsn1"
+  location     = "nbg1"
   ssh_keys     = [hcloud_ssh_key.deploy.id]
   firewall_ids = [hcloud_firewall.db.id]
   user_data = templatefile("${path.module}/../cloud-init/db.yaml", {
-    ssh_public_key = var.ssh_public_key
+    ssh_public_key        = var.ssh_public_key
+    pgdata_volume_id      = hcloud_volume.pgdata.id
+    backups_bucket        = aws_s3_bucket.backups.bucket
+    hetzner_s3_endpoint   = replace(var.hetzner_s3_endpoint, "https://", "")
+    hetzner_s3_access_key = var.hetzner_s3_access_key
+    hetzner_s3_secret_key = var.hetzner_s3_secret_key
+    db_app_password       = var.db_app_password
   })
 
   # No public IPv4/IPv6 (tech proposal §11) — reached only via the
@@ -56,7 +62,13 @@ resource "hcloud_server" "db" {
     ip         = "10.0.0.20"
   }
 
-  depends_on = [hcloud_network_subnet.main, hcloud_network_route.nat_via_app, hcloud_server.app]
+  depends_on = [
+    hcloud_network_subnet.main,
+    hcloud_network_route.nat_via_app,
+    hcloud_server.app,
+    hcloud_volume.pgdata,
+    aws_s3_bucket.backups,
+  ]
 }
 
 resource "hcloud_volume_attachment" "pgdata" {

@@ -23,9 +23,15 @@ vm-app must exist and have finished cloud-init (NAT service up) **before** vm-db
 One-time manual steps after the first apply (not automatable from here):
 
 1. On vm-app: `tailscale up --advertise-tags=tag:server` with an auth key from the Tailscale admin console (ADR 001).
-2. On vm-app: place `/opt/noizera/age.key` (0600, owner `deploy`) and `/opt/noizera/infra/compose/.env.enc`.
-3. On vm-db: everything in `docs/tickets/001-vm-db-bootstrap.md`.
-4. Cloudflare Origin Certificate for Caddy: `docs/tickets/002-caddy-origin-cert.md`.
+2. On vm-app: place `/opt/noizera/age.key` (0600, owner `deploy`) and `/opt/noizera/infra/compose/.env.enc`. The `.env` this decrypts to must set `DATABASE_URL=postgres://noizera:<db_app_password>@pgbouncer:6432/noizera` and `DB_PASSWORD=<db_app_password>` — the same value as the `db_app_password` tofu var, kept in sync by hand (docs/tickets/001-vm-db-bootstrap.md).
+3. Cloudflare Origin Certificate for Caddy: `docs/tickets/002-caddy-origin-cert.md`.
+
+vm-db's cloud-init (`../cloud-init/db.yaml`) now does the rest of ticket 001 itself — PGDATA on the volume, the 4 GB tuning block, `pg_stat_statements`, the `noizera` role/database, pg_hba restricted to vm-app's private IP, and pgBackRest (stanza create + weekly full / daily incremental timers) against the backups bucket. What still needs verifying by hand on the actual first apply (see the ticket's "Seams" and "Open questions"):
+
+- The volume device path (`/dev/disk/by-id/scsi-0HC_Volume_<id>`) is Hetzner's documented convention but unconfirmed on a real VM. The mount is `nofail`, so a wrong path leaves PGDATA on the root disk instead of hanging boot — check `mount | grep postgresql` and `SHOW data_directory;` after first boot; if it's wrong, find the real device name (`lsblk`, `ls /dev/disk/by-id/`), fix the `fstab` line by hand, and re-run the rsync/mount/chown steps from `db.yaml`'s runcmd manually.
+- `psql` from vm-app over the private IP succeeds, from anywhere else fails.
+- `pgbackrest --stanza=noizera check` passes (confirms archiving + the S3 repo are both reachable through the NAT path).
+- `docker compose run --rm api node dist/migrate.js` from vm-app succeeds against `pgbouncer:6432` (ticket 001's "Done when" — blocked until `dist/migrate.js` exists, ticket 003).
 
 ## State
 
@@ -33,6 +39,6 @@ Per tech proposal §11.3: **local state, encrypted with SOPS + age, committed to
 
 ## Before applying anything for real
 
-- Hetzner's CPX/CAX server-type availability has been flaky (tech proposal §15) — re-check availability first.
+- Both VMs are `cx23` (ADR 002), not the CPX32/CPX22 the tech proposal originally sized — Hetzner's CX/CAX line has been flaky to order (tech proposal §15); re-check `cx23` is actually available in `nbg1` before applying.
 - Hetzner Object Storage's conditional-write support isn't confirmed against the `aws_s3_bucket*` resources used here — verify before depending on versioning/lifecycle behaving exactly like AWS S3 (tech proposal §11.3).
 - Brevo's actual MX target and DKIM value (placeholders in `dns.tf`) come from Brevo's sending-domain setup, not from guessing.

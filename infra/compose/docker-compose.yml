@@ -13,6 +13,16 @@
 # Umami (product analytics, tech proposal §13) is not here: it needs its
 # own database and Caddy route and is on the §16 cut list — see
 # docs/tickets/007-umami.md.
+#
+# pgbouncer sits between api/worker-* and vm-db in transaction mode
+# (tech proposal §11 / docs/tickets/001-vm-db-bootstrap.md) — Node
+# connection pools plus workers would otherwise exhaust vm-db's
+# max_connections=100. DATABASE_URL in ../../.env must point here
+# (postgres://noizera:<password>@pgbouncer:6432/noizera), not at
+# 10.0.0.20 directly; DB_PASSWORD in that same file is the password set
+# via the db_app_password tofu var on vm-db. Image/env-var names for
+# edoburu/pgbouncer are believed current but not verified against a real
+# deploy yet — check Docker Hub before relying on this blindly.
 
 services:
   caddy:
@@ -58,6 +68,8 @@ services:
         condition: service_healthy
       valkey:
         condition: service_started
+      pgbouncer:
+        condition: service_started
 
   worker-media:
     image: ghcr.io/${GHCR_OWNER_REPO}-api:${IMAGE_TAG:-latest}
@@ -69,6 +81,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
 
   worker-general:
     image: ghcr.io/${GHCR_OWNER_REPO}-api:${IMAGE_TAG:-latest}
@@ -79,6 +93,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
 
   rabbitmq:
     image: rabbitmq:4-management
@@ -96,6 +112,22 @@ services:
     restart: unless-stopped
     volumes:
       - valkey_data:/data
+
+  pgbouncer:
+    image: edoburu/pgbouncer:1.24.1
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      DB_HOST: "10.0.0.20"
+      DB_PORT: "5432"
+      DB_NAME: "noizera"
+      DB_USER: "noizera"
+      POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
+      MAX_CLIENT_CONN: "200"
+      DEFAULT_POOL_SIZE: "20"
+    expose:
+      - "6432"
 
 volumes:
   caddy_data:
