@@ -12,12 +12,12 @@
   },
   "dependencies": {
     "@noizera/contracts": "workspace:*",
-    "next": "^15.0.0",
+    "next": "^16.3.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@next/eslint-plugin-next": "^15.0.0",
+    "@next/eslint-plugin-next": "^16.3.4",
     "@playwright/test": "^1.47.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
