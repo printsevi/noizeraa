@@ -1,5 +1,5 @@
 ---
-status: open
+status: done
 module: infra
 ---
 
@@ -27,8 +27,11 @@ Out: any module's tables (each module's ticket owns its schema).
 
 ## Open questions
 
-- Whether `migrate.ts` lives in `apps/api` (as §12's command implies) or `packages/infra` with a thin bin in the api image. Recommendation: `apps/api/src/migrate.ts` importing from `@noizera/infra/shared`, so the image already has it.
+- ~~Whether `migrate.ts` lives in `apps/api` (as §12's command implies) or `packages/infra` with a thin bin in the api image.~~ Resolved: the advisory-locked `runMigrations()` logic lives in `packages/infra/src/shared/migrate.ts` (tested there via Testcontainers); `apps/api/src/migrate.ts` is a thin CLI wrapper that reads `DATABASE_URL`, calls it, and sets the exit code.
+- `processed_messages`' PK is `(message_id, consumer)`, not `message_id` alone as the proposal's §4 listing literally shows — a message consumed by more than one consumer type needs each to dedupe independently (§9). Worth a one-line ADR or a §4 erratum if that listing is treated as authoritative elsewhere.
 
 ## Done when
 
 `pnpm --filter @noizera/infra db:generate` produces SQL for the shared tables, the integration test above passes, and `docker compose run --rm api node dist/migrate.js` works against `docker-compose.dev.yml`'s Postgres.
+
+**Status note:** all done. `drizzle.config.ts` + `packages/infra/src/shared/schema.ts` (outbox_messages, processed_messages, audit_log — UUIDv7 ids via an app-side `$defaultFn`, see `packages/infra/src/shared/id.ts`) generate `packages/infra/drizzle/0000_sloppy_captain_america.sql`. `runMigrations()` (`packages/infra/src/shared/migrate.ts`) holds `pg_advisory_lock(72190001)` for the duration; three Testcontainers tests in `migrate.integration.spec.ts` cover applying migrations, idempotent re-runs, and a concurrent run waiting on the lock instead of racing. `apps/api/src/migrate.ts` compiles to `dist/migrate.js` under plain `nest build` (verified) and was run by hand against a real Postgres 17 container using the same image/credentials as `docker-compose.dev.yml` (the literal compose service was blocked locally by an unrelated pre-existing native Postgres service already bound to host port 5432 — not a defect in this ticket). CI: `.github/workflows/ci-cd.yml`'s `lint` job now runs `db:generate` and fails on any uncommitted diff under `packages/infra/drizzle`.

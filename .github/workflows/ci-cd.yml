@@ -47,6 +47,17 @@ jobs:
       # output to resolve workspace imports, hence the build first.
       - run: pnpm build --filter='./packages/*'
       - run: pnpm lint
+      # Fails if the committed SQL under packages/infra/drizzle has
+      # drifted from the schema (ticket 003) — `generate` is schema-only
+      # and never touches a live database, unlike `push`.
+      - run: pnpm --filter @noizera/infra db:generate
+      - run: git diff --exit-code -- packages/infra/drizzle
+      - run: |
+          if [ -n "$(git status --porcelain -- packages/infra/drizzle)" ]; then
+            echo "drizzle-kit generate produced an uncommitted migration — commit it." >&2
+            git status --porcelain -- packages/infra/drizzle >&2
+            exit 1
+          fi
 
   typecheck:
     if: github.event_name != 'workflow_dispatch'

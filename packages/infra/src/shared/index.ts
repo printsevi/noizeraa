@@ -4,4 +4,6 @@
 // AMQP client. Module-owned repositories live in ../<module>/ and are
 // exported as @noizera/infra/<module>; dependency-cruiser only allows
 // apps/api/src/<module> to import its own subpath plus this one.
-export {};
+export { newId } from "./id";
+export { runMigrations } from "./migrate";
+export { auditLog, outboxMessages, processedMessages } from "./schema";
