@@ -401,7 +401,7 @@ The `.priority` queue exists so a Team-tier upload doesn't sit behind a free-tie
 
 **Email deliverability** deserves a paragraph because it is a real failure mode here. You are sending several hundred invitations to people who have never received mail from your domain. Non-negotiable:
 
-- dedicated subdomain (`mail.noizera.app`), SPF + DKIM + DMARC (`p=quarantine`)
+- dedicated subdomain (`mail.noizera.com`), SPF + DKIM + DMARC (`p=quarantine`)
 - separate streams for transactional and invitations, so a bad invitation batch can't take down password resets
 - `List-Unsubscribe` and `List-Unsubscribe-Post` headers on every invitation
 - bounce and complaint webhooks → automatic suppression list, enforced at send time
@@ -497,7 +497,7 @@ The deciding factor is a product requirement, not a preference. Pro and Team tie
   }
 }
 
-noizera.app, www.noizera.app {
+noizera.com, www.noizera.com {
   encode zstd gzip
   handle /api/* { reverse_proxy api:3000 { lb_policy least_conn; health_uri /healthz } }
   handle       { reverse_proxy web:3000 }
@@ -522,7 +522,7 @@ Traefik (MIT) is the reasonable alternative — Docker label routing is nice, an
 | Function | Plan | Why |
 |---|---|---|
 | Authoritative DNS | Free | Fast API, first-class OpenTofu provider, and where your SPF/DKIM/DMARC records live anyway |
-| Proxy + WAF on `noizera.app` | Free | DDoS absorption and managed rules in front of a single unredundant VM |
+| Proxy + WAF on `noizera.com` | Free | DDoS absorption and managed rules in front of a single unredundant VM |
 | Bot and rate rules | Free | The signup and invitation endpoints are the abuse surface |
 | **Turnstile** | Free | CAPTCHA on signup and listener email capture that doesn't ask a listener to identify a bus. The listener flow has a three-minute budget; a puzzle spends a third of it |
 | Caching for `/a/[slug]` | Free | The public card is static and SEO-facing |
@@ -533,7 +533,7 @@ Traefik (MIT) is the reasonable alternative — Docker label routing is nice, an
 **Three consequences to handle:**
 
 1. **Caddy can't use HTTP-01 on proxied hostnames.** Either install a Cloudflare Origin Certificate on Caddy with Full (Strict) mode, or build Caddy with the Cloudflare DNS module and use DNS-01. The origin certificate is simpler and lasts 15 years.
-2. **Custom domains must not be orange-clouded.** Customers CNAME to a separate unproxied hostname (`edge.noizera.app`) so Caddy's on-demand TLS sees a real HTTP-01 challenge.
+2. **Custom domains must not be orange-clouded.** Customers CNAME to a separate unproxied hostname (`edge.noizera.com`) so Caddy's on-demand TLS sees a real HTTP-01 challenge.
 3. **Cloudflare terminates TLS, so it sees plaintext** — including listener email addresses. That makes it a processor under GDPR. Their DPA covers it and SCCs apply, but data localisation to the EU is a paid add-on. If that sits badly against a pitch that sells EU hosting, the fallback is DNS-only (grey cloud) with Caddy terminating TLS directly: you keep the DNS and lose the WAF. Turnstile stays available either way.
 
 My read: orange-cloud the app, note Cloudflare in the subprocessor list, and revisit if a label asks for a data-residency guarantee.

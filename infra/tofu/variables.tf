@@ -5,7 +5,7 @@ variable "hcloud_token" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token (Zone:DNS:Edit, Zone:Zone:Read on the noizera.app zone)"
+  description = "Cloudflare API token (Zone:DNS:Edit, Zone:Zone:Read on the noizera.com zone)"
   type        = string
   sensitive   = true
 }
@@ -52,7 +52,7 @@ variable "admin_ip" {
 variable "domain" {
   description = "Primary domain"
   type        = string
-  default     = "noizera.app"
+  default     = "noizera.com"
 }
 
 variable "environment" {

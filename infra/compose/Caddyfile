@@ -6,7 +6,7 @@
 	}
 }
 
-noizera.app, www.noizera.app {
+noizera.com, www.noizera.com {
 	encode zstd gzip
 
 	handle /api/* {

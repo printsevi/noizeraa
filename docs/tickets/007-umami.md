@@ -14,7 +14,7 @@ Tech proposal §1/§13 suggests self-hosted Umami (MIT) for product analytics. T
 In (when scheduled):
 
 - Its own Postgres database (`umami`) on vm-db with its own role; `DATABASE_URL` for Umami comes from a separate `umami.env.enc`, never the app's `.env`
-- Caddy route (`analytics.noizera.app` or `/umami/*` behind an auth guard) — decide; DNS record in `dns.tf`
+- Caddy route (`analytics.noizera.com` or `/umami/*` behind an auth guard) — decide; DNS record in `dns.tf`
 - Script tag only on the artist workspace and public card, never on the listener flow (`/l/[token]` has a 150 KB JS budget and a three-minute attention budget, §10)
 - GDPR: Umami is cookieless; still list it in the record of processing
 
