@@ -114,6 +114,41 @@ While in there: removed `bash.exe.stackdump` (a crash artifact from a prior MSYS
 
 **Reusable takeaway:** a stray crash-dump file in `git status` is worth a second look before committing — it's easy to `git add -A` it in by accident, and it belongs in `.gitignore`, not in history.
 
+## 12. Full-repo audit via `grill-me` — what a "finished" scaffold was actually hiding
+
+Later the same day, ran `grill-me` not on a feature but on the repo itself: "verify every file, is this ready for an enterprise-quality build, are the agentic files right, what's missing, what hooks/skills should exist." The skill's mechanic transferred cleanly — Claude read all 84 files itself (never asked for a fact it could look up), presented findings first, then worked the decisions as three rounds of numbered questions with a recommended answer each, and only started changing things after an explicit "start."
+
+**What it found in a scaffold that had looked complete** (the full list was ~30 items; the ones worth remembering):
+
+- _Nothing had ever been run._ No `pnpm-lock.yaml`, so every `--frozen-lockfile` in CI and both Dockerfiles would have failed on the first push. `vitest run` in an empty package exits 1 ("no test files"). Nest constructor injection can't resolve under Vitest's default esbuild transform (no decorator metadata) — the one existing test only passed because its controller had no dependencies.
+- _Workspace packages weren't consumable at runtime._ `main: src/index.ts` with no build script means `nest build` compiles `../../packages` into the wrong place and `node dist/main.js` can't `require('@noizera/domain')`. The Dockerfile's `CMD` pointed at a path that would never exist.
+- _CRLF was reaching Linux._ The earlier decision to force CRLF via `.gitattributes` was silently putting `\r` into cloud-init YAML (rendered through `templatefile()` into `user_data`), the Caddyfile and the `.tf` files. Reversed to LF everywhere.
+- _`.gitignore` was hiding the one file the apply workflow commits back._ `*.tfstate.*` matched `terraform.tfstate.enc` and the negation pattern didn't — state would have been lost after the first real apply.
+- _CI could never have deployed._ Public SSH was restricted to the admin IP; GitHub runners have no fixed IP. And vm-db, with no public IP, had a cloud-init that `apt-get`s from the internet with nothing providing NAT. Hetzner cloud firewalls also don't filter private-network traffic, so the "defense in depth" db firewall was inert.
+- _Compose would have corrupted the product database._ `umami` shared the app's `env_file` — it would have read the app `DATABASE_URL` and created its tables there. The pgBackRest compose file couldn't take a backup as written.
+- _Docs had drifted from code within hours._ `infra/README.md` said `docker-compose.dev.yml` "hasn't been scaffolded yet" (it existed); the `tdd` skill said "no test runner is wired up yet"; the proposal said "one image, four roles" when `web` is its own image.
+
+**What was decided and done** (five commits, each group verified by running the whole pipeline, not by asserting it):
+
+1. Toolchain: LF; packages build to `dist/` with `exports` maps (`@noizera/infra/shared`, `@noizera/infra/<module>`); SWC under Vitest (proved with a throwaway constructor-injection test); `dependency-cruiser` rules encoding the module boundaries that had only been prose in `CLAUDE.md` — proved by writing a violating import and watching it fail, then deleting it; lefthook + lint-staged + commitlint; Dependabot, PR template, CODEOWNERS, `.editorconfig`.
+2. CI: least-privilege `permissions:`, SHA-pinned actions, a real sops checksum (fetched from the release, not invented), `tofu plan` posted as a PR comment, deploy over Tailscale with `rsync` of `infra/compose` and a `workflow_dispatch` `sha` input for rollback.
+3. Infra: NAT route + masquerade for vm-db, ufw as the real 5432 control, umami and the db compose file removed, healthchecks so `--wait` means something, path-style flags on the S3 provider. ADR 001 records Tailscale (new signup; `admin_ip` on 22 kept as break-glass).
+4. Docs: eight tickets for the gaps between proposal and scaffold; the proposal bumped to v1.1 with an errata block under its header and the factual fixes applied in place (ADRs are for decisions, errata for corrections); `CLAUDE.md`, the `tdd` skill and `.env.example` re-synced.
+5. Claude tooling: `.claude/settings.json` with a PreToolUse Bash guard (Tofu apply/destroy, `drizzle-kit push`, force-push, `compose down -v`, `rm -rf` outside the scratchpad), a PostToolUse prettier hook, a read-only permission allowlist, and denied reads of `.env*`. The guard was tested against 24 cases — and tripped on its own commit message the first time, which led to anchoring patterns to command position rather than matching anywhere in the text.
+
+**Skills:** searched the registry for NestJS/Drizzle/Playwright/Testcontainers/OpenTofu/Caddy. Only Playwright had a credible hit (`currents-dev/playwright-best-practices`, MIT, 80K+ installs) — vendored under `.claude/skills/` with provenance. The popular NestJS skill was read before installing and **rejected**: its rules mandate mocking the database and `class-validator`, which would have put it in permanent conflict with the project's `tdd` (Testcontainers, never mock your own modules) and `contracts` (Zod) skills. Nothing credible existed for Testcontainers, OpenTofu or Caddy.
+
+**Environment notes worth knowing next time on this machine:** `corepack enable` needs admin (use `corepack pnpm …` or a user-dir shim); Node 24 is installed with no version manager, so `engines` had to be `>=22` rather than exact; Next's `standalone` output needs Windows Developer Mode (symlinks), so it's gated off on `win32` only; Docker Desktop wasn't running, so the image build is the one thing left unverified; `tofu` isn't installed, so `.tf` syntax is checked by the plan workflow, not locally.
+
+**Reusable takeaways:**
+
+- A scaffold that has never been _run_ isn't a scaffold, it's a sketch. `pnpm install` + `build` + `lint` + `typecheck` + `test` green is the minimum bar before calling it done — three of the five would have failed here on the first CI run.
+- `grill-me` works as an audit tool, not just a feature-planning tool: "find facts yourself, present findings, then ask only real decisions" produced a shorter, better session than "review the repo" would have.
+- Architectural rules that exist only in `CLAUDE.md` are wishes. If a boundary matters, write the lint rule and prove it fires — the first version of the dependency-cruiser config silently matched nothing because `dist/` was excluded and workspace imports resolve there.
+- Test every hook and guard against a case file before trusting it, and expect the first false positive to be your own commit message.
+- Read a third-party skill before installing it; the install count measures popularity, not compatibility with your own workflow skills.
+- When the second session on a repo finds docs already stale, that's the signal to add the sync to the definition of done, not to fix it once.
+
 ## Condensed checklist for a future project
 
 1. `/init` → write `CLAUDE.md` immediately, even (especially) before code exists. Call out any milestone that gates real feature work.
@@ -126,3 +161,5 @@ While in there: removed `bash.exe.stackdump` (a crash artifact from a prior MSYS
 8. CI ungated, deploy/infra-apply gated behind a GitHub environment with required reviewers — this is the one line of real protection, make sure it's actually configured, not just implied.
 9. Secrets as repository secrets, gate via the environment, generate keypairs locally, never commit even a placeholder value that looks real.
 10. Add `CLAUDE.md` per code _package_, not per folder — skip folders that already have a README-based convention. Sweep for stray files (crash dumps, editor artifacts) before the first real commit.
+11. Before declaring the scaffold done, actually run it end to end (`install` → `build` → `lint` → `typecheck` → `test`) and commit the lockfile. Then run `grill-me` against the repo itself: it will find what the scaffold hid.
+12. Enforce module boundaries with a lint rule proved against a deliberate violation; add a Bash guard hook for the user-run-only commands (IaC apply, schema push, force push) and test it against a case file.
