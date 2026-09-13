@@ -20,7 +20,11 @@
     ],
     "deny": [
       "Read(./.env)",
-      "Read(./.env.*)",
+      "Read(./.env.local)",
+      "Read(./.env.development)",
+      "Read(./.env.staging)",
+      "Read(./.env.production)",
+      "Read(./.env.test)",
       "Read(./infra/tofu/terraform.tfvars)"
     ]
   },
