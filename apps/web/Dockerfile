@@ -2,7 +2,7 @@
 # Uses Next.js standalone output (see apps/web/next.config.ts) so the
 # runner stage doesn't need node_modules at all.
 
-FROM node:22-alpine AS base
+FROM node:26-alpine AS base
 
 FROM base AS pruner
 WORKDIR /app
