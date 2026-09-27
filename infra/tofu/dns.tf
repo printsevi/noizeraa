@@ -2,6 +2,19 @@
 # hostnames are proxied (orange-cloud); the custom-domain edge hostname
 # and mail records are DNS-only.
 
+# Full (Strict) requires Caddy to present a cert Cloudflare's edge
+# trusts for the proxied hostnames (root/www) — the Cloudflare Origin CA
+# cert from docs/tickets/002-caddy-origin-cert.md. Without this override
+# the zone defaults to Flexible, which would let edge<->origin traffic
+# run over plaintext HTTP.
+resource "cloudflare_zone_settings_override" "main" {
+  zone_id = var.cloudflare_zone_id
+
+  settings {
+    ssl = "strict"
+  }
+}
+
 resource "cloudflare_record" "root" {
   zone_id = var.cloudflare_zone_id
   name    = "@"

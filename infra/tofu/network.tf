@@ -25,6 +25,12 @@ resource "hcloud_network_route" "nat_via_app" {
 # tech proposal §11.2), 22 restricted to the admin IP as break-glass.
 # Routine SSH (CI deploys, day-to-day admin) goes over Tailscale
 # (ADR 001), which never touches the public interface.
+#
+# Deliberately NOT restricted to Cloudflare's published IP ranges
+# (docs/tickets/002-caddy-origin-cert.md's origin-IP-concealment
+# question): edge.noizera.com (custom domains) is unproxied by design,
+# so Caddy's on-demand TLS needs a real HTTP-01 challenge to reach it
+# from Let's Encrypt's validators, not just from Cloudflare's edge.
 resource "hcloud_firewall" "app" {
   name = "noizera-app-${var.environment}"
 

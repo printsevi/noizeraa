@@ -14,6 +14,10 @@
 # own database and Caddy route and is on the §16 cut list — see
 # docs/tickets/007-umami.md.
 #
+# caddy's /opt/noizera/certs mount (origin.pem/origin.key) is the
+# Cloudflare Origin CA cert, provisioned by hand the same way as
+# .env.enc — see docs/tickets/002-caddy-origin-cert.md.
+#
 # pgbouncer sits between api/worker-* and vm-db in transaction mode
 # (tech proposal §11 / docs/tickets/001-vm-db-bootstrap.md) — Node
 # connection pools plus workers would otherwise exhaust vm-db's
@@ -34,6 +38,7 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/noizera/certs:/certs:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:

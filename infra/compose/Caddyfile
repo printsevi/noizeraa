@@ -7,6 +7,15 @@
 }
 
 noizera.com, www.noizera.com {
+	# Cloudflare Full (Strict) (dns.tf cloudflare_zone_settings_override)
+	# needs a cert the edge trusts — a Cloudflare Origin CA cert, not
+	# ACME: root/www are orange-clouded, so an HTTP-01 challenge for
+	# them hits Cloudflare's edge, never this container. Provisioned by
+	# hand alongside .env.enc (docs/tickets/002-caddy-origin-cert.md);
+	# the on-demand ACME block below is unaffected — edge.noizera.com is
+	# deliberately unproxied.
+	tls /certs/origin.pem /certs/origin.key
+
 	encode zstd gzip
 
 	handle /api/* {

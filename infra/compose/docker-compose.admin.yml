@@ -1,0 +1,40 @@
+# Admin-only tooling — deliberately NOT part of docker-compose.yml or the
+# CI deploy pipeline. Run by hand, over Tailscale only: pgAdmin binds to
+# vm-app's own tailnet IP, never the public interface, and is never
+# proxied through Caddy/Cloudflare — no public DNS record, no cert
+# needed. See docs/tickets/009-pgadmin-tailscale.md.
+#
+# Usage (from /opt/noizera/infra/compose on vm-app):
+#   docker compose -f docker-compose.admin.yml --env-file .env.admin.local up -d
+#   docker compose -f docker-compose.admin.yml --env-file .env.admin.local down
+#
+# .env.admin.local (gitignored via the repo's `.env.*.local` rule, created
+# by hand on vm-app, never committed, never sent through chat):
+#   PGADMIN_DEFAULT_EMAIL=you@example.com
+#   PGADMIN_DEFAULT_PASSWORD=<a password for pgAdmin's own login — not the DB password>
+#   TAILSCALE_IP=100.x.x.x   # this host's own tailnet IP, from `tailscale ip -4`
+#
+# The Postgres connection itself (host 10.0.0.20, db/role "noizera") is
+# registered by hand inside the pgAdmin UI after first login — its
+# password is typed there directly and never lives in this file or in
+# tfvars. vm-db's pg_hba.conf and ufw already permit this (both scoped to
+# vm-app's private IP, 10.0.0.10 — see infra/cloud-init/db.yaml), so no
+# db-side change is needed for this to work.
+
+services:
+  pgadmin:
+    image: dpage/pgadmin4:9
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
+    ports:
+      # Bound to vm-app's tailnet IP only — never 0.0.0.0. Nothing outside
+      # the tailnet can reach this port at all.
+      - "${TAILSCALE_IP}:5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+volumes:
+  pgadmin_data:
